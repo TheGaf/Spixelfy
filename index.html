@@ -45,11 +45,54 @@ canvas { position: fixed; inset: 0; display: block; width: 100vw; height: 100vh;
   background: var(--accent); color: #000; font: inherit; font-weight: 700; letter-spacing: .04em; cursor: pointer;
 }
 .footer { font-size: 10px; color: #666; margin-top: 10px; line-height: 1.35; }
+#mobileControls {
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right));
+  z-index: 12;
+  display: none;
+  gap: 6px;
+  align-items: center;
+}
+
+#mobileControls button {
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 999px;
+  background: rgba(0,0,0,.38);
+  color: rgba(220,220,220,.92);
+  font-family: 'Micro 5', monospace;
+  font-size: 16px;
+  line-height: 1;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  cursor: pointer;
+  padding: 0;
+}
+
+#mobileControls button:active {
+  background: rgba(255,255,255,.14);
+  color: #fff;
+}
+
+@media (max-width: 700px) {
+  #mobileControls {
+    display: flex;
+  }
+}
 </style>
 </head>
 <body>
 <canvas id="art"></canvas>
 <canvas id="ui"></canvas>
+
+<div id="mobileControls" aria-label="Mobile controls">
+  <button type="button" data-action="mode">C</button>
+  <button type="button" data-action="text">T</button>
+  <button type="button" data-action="twinkle">P</button>
+  <button type="button" data-action="help">H</button>
+</div>
 
 <div id="splash">
   <div class="panel" role="dialog" aria-modal="true" aria-labelledby="title">
@@ -88,6 +131,7 @@ const artCtx = artCanvas.getContext('2d', { alpha: false });
 const uiCtx  = uiCanvas.getContext('2d');
 const splash   = document.getElementById('splash');
 const startBtn = document.getElementById('start');
+const mobileControls = document.getElementById('mobileControls');
 const off = document.createElement('canvas');
 const offCtx = off.getContext('2d', { alpha: false, willReadFrequently: true });
 
@@ -799,6 +843,37 @@ uiCanvas.addEventListener('click', (e) => {
   }
   if (hit(state.textRect)) {
     state.showText = !state.showText;
+    return;
+  }
+});
+
+mobileControls.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-action]');
+  if (!btn) return;
+
+  const action = btn.dataset.action;
+
+  if (action === 'mode') {
+    setMode(state.modeIndex + 1);
+    return;
+  }
+
+  if (action === 'text') {
+    state.showText = !state.showText;
+    return;
+  }
+
+  if (action === 'twinkle') {
+    toggleTwinkle();
+    return;
+  }
+
+  if (action === 'help') {
+    splash.classList.toggle('hidden');
+    if (!splash.classList.contains('hidden') && state.hasStarted) {
+      startBtn.textContent = '[ RUNNING ]';
+      startBtn.disabled = false;
+    }
     return;
   }
 });
