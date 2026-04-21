@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SpixelfyProd_v1</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;600;700&family=Micro+5&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #000;
+  --fg: #d7d7d7;
+  --muted: #7f7f7f;
+  --accent: #00ff6a;
+  --warn: #ffd188;
+  --error: #ff8f8f;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 100%; height: 100%; background: var(--bg); overflow: hidden; }
+body { font-family: 'Titillium Web', sans-serif; color: var(--fg); }
+canvas { position: fixed; inset: 0; display: block; width: 100vw; height: 100vh; }
+#art { z-index: 1; }
+#ui  { z-index: 2; pointer-events: auto; }
+
+#splash {
+  position: fixed; inset: 0; z-index: 10; background: rgba(0,0,0,.965);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+#splash.hidden { display: none; }
+
+.panel {
+  width: min(320px, 90vw); border: 4px solid rgba(0,255,106,.8); border-radius: 14px;
+  padding: 22px 18px 16px; background: rgba(0,0,0,.88); text-align: center;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.04), 0 24px 72px rgba(0,0,0,.65);
+}
+.title { font-family: 'Micro 5', monospace; font-size: clamp(54px, 12vw, 78px); line-height: .9; color: var(--accent); }
+.by { color: var(--muted); font-size: 12px; margin: 4px 0 10px; }
+.logo { width: 64px; height: 64px; object-fit: contain; margin: 6px auto 12px; display:block; cursor:pointer; }
+.commands { color: var(--fg); font-size: 13px; line-height: 1.45; margin-bottom: 14px; }
+.commands strong { color: var(--accent); }
+.cta {
+  min-width: 210px; min-height: 44px; padding: 0 18px; border-radius: 999px; border: none;
+  background: var(--accent); color: #000; font: inherit; font-weight: 700; letter-spacing: .04em; cursor: pointer;
+}
+.footer { font-size: 10px; color: #666; margin-top: 10px; line-height: 1.35; }
+</style>
+</head>
+<body>
+<canvas id="art"></canvas>
+<canvas id="ui"></canvas>
+
+<div id="splash">
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="title">
+    <div id="title" class="title">SPIXELFY</div>
+    <div class="by">SpixelfyProd_v1 · shared session</div>
+    <img class="logo" src="https://gaf.nyc/thegaf.nyc/theGafNYC.gif" alt="The Gaf NYC logo" width="64" height="64" loading="eager"
+         onclick="window.open('https://gaf.nyc', '_blank', 'noopener,noreferrer')">
+    <div class="commands">
+      <strong>F</strong> Fullscreen · <strong>C</strong> Pixel Modes<br>
+      <strong>T</strong> Toggle Text · <strong>P</strong> Cover Twinkle<br>
+      <strong>H</strong> Help Overlay
+    </div>
+    <button id="start" class="cta" type="button">[ START VISUALIZER ]</button>
+    <div class="footer">One shared Spotify session. No data stored in browser.<br>©2026 THE GAF NYC</div>
+  </div>
+</div>
+
+<script>
+const CONFIG = {
+  apiEndpoint: '/api/current-track',
+  frontendPollPlayingMs: 8000,
+  frontendPollPausedMs: 20000,
+  frontendPollHiddenMs: 25000,
+  splashTile: 12,
+  transitionPercentPerFrame: 0.075,
+  idleBlendFrames: 22,
+  staleWarnMs: 45000,
+  staleErrorMs: 90000,
+  trackEventFrames: 18
+};
+
+const artCanvas = document.getElementById('art');
+const uiCanvas  = document.getElementById('ui');
+const artCtx = artCanvas.getContext('2d', { alpha: false });
+const uiCtx  = uiCanvas.getContext('2d');
+const splash   = document.getElementById('splash');
+const startBtn = document.getElementById('start');
+const off = document.createElement('canvas');
+const offCtx = off.getContext('2d', { alpha: false, willReadFrequently: true });
+
+const modes = [
+  { shape: 'square', size: 32 },
+  { shape: 'circle', size: 32 },
+  { shape: 'square', size: 64 },
+  { shape: 'circle', size: 64 }
+];
+
+const state = {
+  running: false,
+  modeIndex: 0,
+  shape: modes[0].shape,
+  gridSize: modes[0].size,
+  displayScale: 12,
+  showText: true,
+  twinkleEnabled: true,
+  pollTimer: null,
+  inflight: false,
+  currentImg: null,
+  currentFrame: null,
+  oldFrame: null,
+  transitionOrder: [],
+  transitionProgress: 0,
+  transitionPixelsPerFrame: 0,
+  blendTarget: null,
+  blendCountdown: 0,
+  artist: 'SPIXELFY',
+  title: 'Waiting for shared source',
+  isPlaying: false,
+  progressMs: 0,
+  durationMs: 0,
+  updatedAtMs: 0,
+  stale: false,
+  staleLevel: '',
+  statusText: '',
+  statusTone: '',
+  phase: 0,
+  splashTiles: [],
+  splashReveal: 0,
+  splashStep: 0,
+  splashDissolving: false,
+  logoReady: false,
+  idleCache: null,
+  idleAt: 0,
+  hudRects: {},
+  coverRect: null,
+  textRect: null,
+  modePulseUntil: 0,
+  modePulseMs: 180,
+  twinkleBuffer: [],
+  lastImageUrl: null,
+  lastTrackId: null,
+  trackEventFramesLeft: 0
+};
+
+const logo = new Image();
+logo.onload = () => { state.logoReady = true; };
+logo.src = 'https://gaf.nyc/thegaf.nyc/theGafNYC.gif';
+
+function setStatus(text = '', tone = '') {
+  state.statusText = text;
+  state.statusTone = tone;
+}
+
+function resizeCanvas(canvas, ctx) {
+  const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
+  canvas.width  = Math.floor(window.innerWidth  * dpr);
+  canvas.height = Math.floor(window.innerHeight * dpr);
+  canvas.style.width  = `${window.innerWidth}px`;
+  canvas.style.height = `${window.innerHeight}px`;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function updateScale() {
+  const minSide = Math.min(window.innerWidth, window.innerHeight);
+  if (minSide < 430) state.displayScale = 7;
+  else if (minSide < 580) state.displayScale = 8;
+  else if (minSide < 760) state.displayScale = 10;
+  else state.displayScale = 12;
+}
+
+function resize() {
+  resizeCanvas(artCanvas, artCtx);
+  resizeCanvas(uiCanvas, uiCtx);
+  updateScale();
+  state.idleCache = null;
+  if (!state.currentFrame) state.currentFrame = getIdleFrame(true);
+}
+window.addEventListener('resize', resize);
+resize();
+
+function vp() {
+  const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
+  return { w: artCanvas.width / dpr, h: artCanvas.height / dpr };
+}
+
+function nextPollDelay() {
+  if (document.visibilityState === 'hidden') return CONFIG.frontendPollHiddenMs;
+  return state.isPlaying ? CONFIG.frontendPollPlayingMs : CONFIG.frontendPollPausedMs;
+}
+
+function stopPolling() {
+  if (state.pollTimer) clearTimeout(state.pollTimer);
+  state.pollTimer = null;
+}
+
+function schedulePoll(delay = nextPollDelay()) {
+  stopPolling();
+  state.pollTimer = setTimeout(fetchCachedTrack, delay);
+}
+
+function updateStaleState() {
+  if (!state.updatedAtMs) {
+    state.stale = false;
+    state.staleLevel = '';
+    return;
+  }
+  const age = Date.now() - state.updatedAtMs;
+  if (age >= CONFIG.staleErrorMs || state.stale) {
+    state.stale = true;
+    state.staleLevel = 'error';
+  } else if (age >= CONFIG.staleWarnMs) {
+    state.stale = true;
+    state.staleLevel = 'warn';
+  } else {
+    state.stale = false;
+    state.staleLevel = '';
+  }
+}
+
+function applyStatusFromState() {
+  updateStaleState();
+  if (state.staleLevel === 'error') {
+    setStatus('Playback data frozen or backend stale.', 'error');
+    return;
+  }
+  if (state.staleLevel === 'warn') {
+    setStatus('Playback data may be outdated.', 'warn');
+    return;
+  }
+  if (!state.isPlaying) {
+    setStatus('Shared source idle.', 'warn');
+    return;
+  }
+  setStatus('Live from shared backend cache.');
+}
+
+async function fetchCachedTrack() {
+  if (state.inflight) return;
+  state.inflight = true;
+
+  try {
+    const res = await fetch(CONFIG.apiEndpoint, { cache: 'no-store' });
+
+    if (!res.ok) {
+      setStatus(`Backend unavailable (${res.status}).`, 'error');
+      schedulePoll();
+      return;
+    }
+
+    const data = await res.json();
+
+    const prevImage = state.lastImageUrl;
+    const prevTrack = state.lastTrackId;
+
+    state.artist = data.artist || 'Unknown artist';
+    state.title = data.track || 'Unknown track';
+    state.isPlaying = !!data.isPlaying;
+    state.progressMs = typeof data.progressMs === 'number' ? data.progressMs : 0;
+    state.durationMs = typeof data.durationMs === 'number' ? data.durationMs : 0;
+    state.updatedAtMs = data.updatedAt ? Date.parse(data.updatedAt) : 0;
+    state.stale = !!data.stale;
+    state.lastImageUrl = data.imageUrl || null;
+    state.lastTrackId  = data.trackId || null;
+
+    const trackChanged =
+      (state.lastTrackId && state.lastTrackId !== prevTrack) ||
+      (state.lastImageUrl && state.lastImageUrl !== prevImage);
+
+    if (data.imageUrl && state.isPlaying && data.imageUrl !== prevImage) {
+      loadCover(data.imageUrl);
+    } else if (!state.isPlaying) {
+      queueIdleBlend();
+    }
+
+    if (trackChanged && state.isPlaying) {
+      state.trackEventFramesLeft = CONFIG.trackEventFrames;
+    }
+
+    applyStatusFromState();
+    schedulePoll();
+  } catch (err) {
+    console.error(err);
+    setStatus('Network error talking to backend.', 'error');
+    schedulePoll();
+  } finally {
+    state.inflight = false;
+  }
+}
+
+function beginApp() {
+  if (!state.running) {
+    state.running = true;
+    requestAnimationFrame(loop);
+  }
+  beginSplashDissolve();
+  startBtn.disabled = true;
+  startBtn.textContent = '[ RUNNING ]';
+  fetchCachedTrack();
+}
+
+function setMode(nextIndex) {
+  state.modeIndex = (nextIndex + modes.length) % modes.length;
+  state.shape    = modes[state.modeIndex].shape;
+  state.gridSize = modes[state.modeIndex].size;
+  state.idleCache = null;
+  refreshTwinkleBuffer();
+  if (state.currentImg) {
+    state.currentFrame = getStaticFrame(state.currentImg);
+  } else {
+    state.currentFrame = getIdleFrame(true);
+  }
+  if (state.oldFrame && state.currentFrame) buildTransitionOrder();
+  state.modePulseUntil = performance.now() + state.modePulseMs;
+}
+
+function toggleTwinkle() {
+  state.twinkleEnabled = !state.twinkleEnabled;
+  setStatus(state.twinkleEnabled ? 'Cover twinkle on.' : 'Cover twinkle off.', state.twinkleEnabled ? '' : 'warn');
+}
+
+function drawSquareCover(ctx, img, size) {
+  const sw = img.naturalWidth || img.width;
+  const sh = img.naturalHeight || img.height;
+  const side = Math.min(sw, sh);
+  const sx = (sw - side) / 2;
+  const sy = (sh - side) / 2;
+  ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
+}
+
+function getStaticFrame(img) {
+  off.width  = state.gridSize;
+  off.height = state.gridSize;
+  offCtx.clearRect(0, 0, state.gridSize, state.gridSize);
+  offCtx.imageSmoothingEnabled = true;
+  drawSquareCover(offCtx, img, state.gridSize);
+  return offCtx.getImageData(0, 0, state.gridSize, state.gridSize);
+}
+
+function buildTransitionOrder() {
+  state.transitionOrder = [];
+  for (let y = 0; y < state.gridSize; y++) {
+    for (let x = 0; x < state.gridSize; x++) state.transitionOrder.push([x, y]);
+  }
+  state.transitionOrder.sort(() => Math.random() - 0.5);
+  state.transitionPixelsPerFrame = Math.max(1, Math.floor(state.transitionOrder.length * CONFIG.transitionPercentPerFrame));
+  state.transitionProgress = 0;
+}
+
+function refreshTwinkleBuffer() {
+  state.twinkleBuffer = [];
+  const density = state.gridSize <= 32 ? 10 : 18;
+  for (let i = 0; i < density; i++) {
+    state.twinkleBuffer.push({
+      x: Math.floor(Math.random() * state.gridSize),
+      y: Math.floor(Math.random() * state.gridSize),
+      life: Math.random(),
+      speed: 0.006 + Math.random() * 0.018,
+      boost: 0.04 + Math.random() * 0.08
+    });
+  }
+}
+
+function applyTwinkle(frame) {
+  if (!state.twinkleEnabled || !frame || !state.twinkleBuffer.length) return frame;
+  const working = new ImageData(new Uint8ClampedArray(frame.data), frame.width, frame.height);
+
+  for (const t of state.twinkleBuffer) {
+    t.life += t.speed;
+    if (t.life > 1) {
+      t.x = Math.floor(Math.random() * state.gridSize);
+      t.y = Math.floor(Math.random() * state.gridSize);
+      t.life = 0;
+      t.speed = 0.006 + Math.random() * 0.018;
+      t.boost = 0.04 + Math.random() * 0.08;
+    }
+    const pulse = Math.pow(Math.sin(t.life * Math.PI), 2);
+    const idx = (t.y * state.gridSize + t.x) * 4;
+    working.data[idx]   = Math.min(255, working.data[idx]   + 255 * t.boost * pulse);
+    working.data[idx+1] = Math.min(255, working.data[idx+1] + 255 * t.boost * pulse);
+    working.data[idx+2] = Math.min(255, working.data[idx+2] + 255 * t.boost * pulse);
+  }
+
+  return working;
+}
+
+function loadCover(url) {
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    if (state.currentImg) state.oldFrame = getStaticFrame(state.currentImg);
+    state.currentImg   = img;
+    state.currentFrame = getStaticFrame(img);
+    refreshTwinkleBuffer();
+    if (state.oldFrame) buildTransitionOrder();
+    state.blendTarget   = null;
+    state.blendCountdown = 0;
+  };
+  img.onerror = () => setStatus('Album art failed to load.', 'warn');
+  img.src = url;
+}
+
+function queueIdleBlend() {
+  state.oldFrame    = state.currentFrame || getIdleFrame(true);
+  state.blendTarget = getIdleFrame(true);
+  state.blendCountdown = CONFIG.idleBlendFrames;
+}
+
+function blendFrames(a, b, t) {
+  if (!a) return b;
+  if (!b) return a;
+  const out = new ImageData(a.width, a.height);
+  for (let i = 0; i < a.data.length; i += 4) {
+    out.data[i]   = Math.round(a.data[i]   + (b.data[i]   - a.data[i])   * t);
+    out.data[i+1] = Math.round(a.data[i+1] + (b.data[i+1] - a.data[i+1]) * t);
+    out.data[i+2] = Math.round(a.data[i+2] + (b.data[i+2] - a.data[i+2]) * t);
+    out.data[i+3] = 255;
+  }
+  return out;
+}
+
+function getIdleFrame(force = false) {
+  const now = performance.now();
+  if (!force && state.idleCache && now - state.idleAt < 90) return state.idleCache;
+  off.width  = state.gridSize;
+  off.height = state.gridSize;
+  const img = offCtx.createImageData(state.gridSize, state.gridSize);
+  state.phase += 0.018;
+  for (let y = 0; y < state.gridSize; y++) {
+    for (let x = 0; x < state.gridSize; x++) {
+      const idx = (y * state.gridSize + x) * 4;
+      const n = Math.sin((x * 0.32) + state.phase) + Math.cos((y * 0.28) - state.phase * 0.9);
+      const glow = Math.max(0, Math.round(18 + n * 8));
+      img.data[idx]   = 0;
+      img.data[idx+1] = 122 + glow;
+      img.data[idx+2] = 28 + Math.round(glow * 0.35);
+      img.data[idx+3] = 255;
+    }
+  }
+  state.idleCache = img;
+  state.idleAt    = now;
+  return img;
+}
+
+function applyTrackEvent(frame) {
+  if (!frame || state.trackEventFramesLeft <= 0) return frame;
+  const out = new ImageData(new Uint8ClampedArray(frame.data), frame.width, frame.height);
+  const t = state.trackEventFramesLeft / CONFIG.trackEventFrames;
+  const boost = 0.12 * Math.sin(t * Math.PI);
+  for (let i = 0; i < out.data.length; i += 4) {
+    out.data[i]   = Math.min(255, out.data[i]   + 255 * boost * 0.2);
+    out.data[i+1] = Math.min(255, out.data[i+1] + 255 * boost * 0.4);
+    out.data[i+2] = Math.min(255, out.data[i+2] + 255 * boost * 0.1);
+  }
+  state.trackEventFramesLeft -= 1;
+  return out;
+}
+
+function getRenderFrame() {
+  let base;
+  if (state.blendTarget && state.blendCountdown > 0) {
+    const total = CONFIG.idleBlendFrames;
+    const done  = total - state.blendCountdown;
+    const t = Math.min(1, done / total);
+    const out = blendFrames(state.oldFrame, state.blendTarget, t);
+    state.blendCountdown -= 1;
+    if (state.blendCountdown <= 0) {
+      state.currentFrame = state.blendTarget;
+      state.blendTarget  = null;
+      state.oldFrame     = null;
+    }
+    base = out;
+  } else if (state.oldFrame && state.currentFrame && state.transitionOrder.length) {
+    const out   = new ImageData(new Uint8ClampedArray(state.oldFrame.data), state.gridSize, state.gridSize);
+    const limit = Math.min(state.transitionOrder.length, state.transitionProgress + state.transitionPixelsPerFrame);
+    for (let i = 0; i < limit; i++) {
+      const [x, y] = state.transitionOrder[i];
+      const idx = (y * state.gridSize + x) * 4;
+      out.data[idx]   = state.currentFrame.data[idx];
+      out.data[idx+1] = state.currentFrame.data[idx+1];
+      out.data[idx+2] = state.currentFrame.data[idx+2];
+      out.data[idx+3] = 255;
+    }
+    state.transitionProgress = limit;
+    if (limit >= state.transitionOrder.length) {
+      state.oldFrame = null;
+      state.transitionOrder = [];
+      state.transitionProgress = 0;
+    }
+    base = out;
+  } else {
+    base = state.currentFrame || getIdleFrame();
+  }
+  const tw = applyTwinkle(base);
+  return applyTrackEvent(tw);
+}
+
+function drawBackground() {
+  const { w, h } = vp();
+  artCtx.fillStyle = '#000';
+  artCtx.fillRect(0, 0, w, h);
+}
+
+function drawPixels(frame) {
+  const { w, h } = vp();
+  const gridPx = state.gridSize * state.displayScale;
+  const ox = Math.floor((w - gridPx) / 2);
+  const oy = Math.floor((h - gridPx) / 2);
+  state.coverRect = { x: ox, y: oy, w: gridPx, h: gridPx };
+  for (let y = 0; y < state.gridSize; y++) {
+    for (let x = 0; x < state.gridSize; x++) {
+      const idx = (y * state.gridSize + x) * 4;
+      artCtx.fillStyle = `rgb(${frame.data[idx]},${frame.data[idx+1]},${frame.data[idx+2]})`;
+      const px = ox + x * state.displayScale;
+      const py = oy + y * state.displayScale;
+      if (state.shape === 'square') {
+        artCtx.fillRect(px, py, state.displayScale, state.displayScale);
+      } else {
+        artCtx.beginPath();
+        artCtx.arc(
+          px + state.displayScale / 2,
+          py + state.displayScale / 2,
+          Math.max(1, state.displayScale / 2 - 1.5),
+          0,
+          Math.PI * 2
+        );
+        artCtx.fill();
+      }
+    }
+  }
+}
+
+function drawUi() {
+  const { w, h } = vp();
+  uiCtx.clearRect(0, 0, w, h);
+
+  const pad   = 16;
+  const y = pad;
+
+  uiCtx.textBaseline = 'top';
+  uiCtx.textAlign = 'left';
+  uiCtx.font = '14px "Titillium Web"';
+
+  const modeLabel = `➜ ${state.shape === 'square' ? 'Sq' : 'Cir'} ${state.gridSize}`;
+  const now = performance.now();
+  const pulseT = Math.max(0, (state.modePulseUntil - now) / state.modePulseMs);
+  const pulseGlow = pulseT > 0 ? Math.sin(pulseT * Math.PI) : 0;
+
+  uiCtx.fillStyle = pulseGlow > 0
+    ? `rgba(${Math.round(220 - (220 - 85) * pulseGlow)}, ${Math.round(220 + (207 - 220) * pulseGlow)}, ${Math.round(220 + (255 - 220) * pulseGlow)}, 0.98)`
+    : 'rgba(220,220,220,.88)';
+
+  uiCtx.fillText(modeLabel, pad, y);
+
+  if (pulseGlow > 0) {
+    uiCtx.strokeStyle = `rgba(85,207,255,${0.28 * pulseGlow})`;
+    uiCtx.lineWidth = 1;
+    uiCtx.strokeText(modeLabel, pad, y);
+  }
+
+  const textWidth = uiCtx.measureText(modeLabel).width;
+  state.hudRects.mode = { x: pad, y, w: textWidth, h: 18 };
+
+  if (state.logoReady) uiCtx.drawImage(logo, 20, h - 84, 64, 64);
+
+  if (state.showText) {
+    const songText = `${state.artist} - ${state.title}`;
+    const dotColor =
+      state.staleLevel === 'error'
+        ? '#ff5a5a'
+        : state.staleLevel === 'warn'
+        ? '#ffd35f'
+        : state.isPlaying
+        ? '#3dff7a'
+        : '#ffd35f';
+
+    uiCtx.font = '16px "Micro 5"';
+    uiCtx.textAlign = 'right';
+    uiCtx.textBaseline = 'alphabetic';
+
+    const dotRadius = 5;
+    const gap = 10;
+    const songWidth = uiCtx.measureText(songText).width;
+    const anchorX = w - 20;
+    const baselineY = h - 20;
+    const dotX = anchorX - songWidth - gap - dotRadius * 2;
+    const dotY = baselineY - 5;
+
+    state.textRect = {
+      x: dotX - dotRadius - 6,
+      y: baselineY - 20,
+      w: anchorX - (dotX - dotRadius - 6),
+      h: 26
+    };
+
+    uiCtx.beginPath();
+    uiCtx.fillStyle = dotColor;
+    uiCtx.arc(dotX, dotY, dotRadius, 0, Math.PI * 2);
+    uiCtx.fill();
+
+    uiCtx.fillStyle = '#cecece';
+    uiCtx.fillText(songText, anchorX, baselineY);
+  } else {
+    state.textRect = {
+      x: w - 260,
+      y: h - 40,
+      w: 240,
+      h: 28
+    };
+  }
+}
+
+function beginSplashDissolve() {
+  if (state.splashDissolving) return;
+  const cols = Math.ceil(window.innerWidth / CONFIG.splashTile);
+  const rows = Math.ceil(window.innerHeight / CONFIG.splashTile);
+  state.splashTiles = [];
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) state.splashTiles.push({ x, y });
+  }
+  state.splashTiles.sort(() => Math.random() - 0.5);
+  state.splashReveal = 0;
+  state.splashStep   = Math.max(20, Math.floor(state.splashTiles.length * 0.09));
+  state.splashDissolving = true;
+}
+
+function renderSplashDissolve() {
+  if (!state.splashDissolving) return;
+  const ctx = uiCtx;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,.96)';
+  ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+  state.splashReveal = Math.min(state.splashTiles.length, state.splashReveal + state.splashStep);
+  ctx.globalCompositeOperation = 'destination-out';
+  for (let i = 0; i < state.splashReveal; i++) {
+    const t = state.splashTiles[i];
+    ctx.fillRect(t.x * CONFIG.splashTile, t.y * CONFIG.splashTile, CONFIG.splashTile, CONFIG.splashTile);
+  }
+  ctx.restore();
+  if (state.splashReveal >= state.splashTiles.length) {
+    splash.classList.add('hidden');
+    state.splashDissolving = false;
+  }
+}
+
+function loop() {
+  applyStatusFromState();
+  drawBackground();
+  const frame = getRenderFrame();
+  drawPixels(frame);
+  drawUi();
+  renderSplashDissolve();
+  requestAnimationFrame(loop);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (state.running) schedulePoll();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'c' || e.key === 'C') setMode(state.modeIndex + 1);
+  if (e.key === 't' || e.key === 'T') state.showText = !state.showText;
+  if (e.key === 'p' || e.key === 'P') toggleTwinkle();
+  if (e.key === 'h' || e.key === 'H') splash.classList.toggle('hidden');
+  if (e.key === 'Escape' && !splash.classList.contains('hidden')) splash.classList.add('hidden');
+  if (e.key === 'f' || e.key === 'F') {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
+    else document.exitFullscreen().catch(() => {});
+  }
+});
+
+uiCanvas.addEventListener('click', (e) => {
+  const rect = uiCanvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  const hit = (box) =>
+    box && x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h;
+
+  if (hit(state.hudRects.mode)) {
+    setMode(state.modeIndex + 1);
+    return;
+  }
+  if (hit(state.coverRect)) {
+    setMode(state.modeIndex + 1);
+    return;
+  }
+  if (hit(state.textRect)) {
+    state.showText = !state.showText;
+    return;
+  }
+});
+
+startBtn.addEventListener('click', () => {
+  if (state.running) {
+    splash.classList.add('hidden');
+    return;
+  }
+  beginApp();
+});
+state.currentFrame = getIdleFrame(true);
+refreshTwinkleBuffer();
+setStatus('');
+</script>
+</body>
+</html>
