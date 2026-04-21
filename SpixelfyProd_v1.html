@@ -563,7 +563,7 @@ function drawUi() {
   const textWidth = uiCtx.measureText(modeLabel).width;
   state.hudRects.mode = { x: pad, y, w: textWidth, h: 18 };
 
-  iif (state.logoReady) {
+  if (state.logoReady) {
     uiCtx.drawImage(logo, 20, h - 84, 64, 64);
     state.hudRects.logo = { x: 20, y: h - 84, w: 64, h: 64 };
   }
