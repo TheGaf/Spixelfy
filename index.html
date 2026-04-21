@@ -402,6 +402,7 @@ function beginApp() {
   beginSplashDissolve();
   startBtn.disabled = true;
   startBtn.textContent = '[ RUNNING ]';
+  updateMobileControlsVisibility();
   fetchCachedTrack();
 }
 
@@ -818,9 +819,10 @@ function renderSplashDissolve() {
     ctx.fillRect(t.x * CONFIG.splashTile, t.y * CONFIG.splashTile, CONFIG.splashTile, CONFIG.splashTile);
   }
   ctx.restore();
-  if (state.splashReveal >= state.splashTiles.length) {
+    if (state.splashReveal >= state.splashTiles.length) {
     splash.classList.add('hidden');
     state.splashDissolving = false;
+    updateMobileControlsVisibility();
   }
 }
 
@@ -842,16 +844,15 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'c' || e.key === 'C') setMode(state.modeIndex + 1);
   if (e.key === 't' || e.key === 'T') state.showText = !state.showText;
   if (e.key === 'p' || e.key === 'P') toggleTwinkle();
-  if (e.key === 'h' || e.key === 'H') {
-  if (!state.hasStarted) {
-      // Before first start, keep it as a blocking splash
+    if (e.key === 'h' || e.key === 'H') {
+    if (!state.hasStarted) {
       splash.classList.toggle('hidden');
     } else {
-      // After start, use as translucent help overlay
       splash.classList.toggle('hidden');
       startBtn.textContent = '[ RUNNING ]';
       startBtn.disabled = false;
     }
+    updateMobileControlsVisibility();
   }
   if (e.key === 'Escape' && !splash.classList.contains('hidden')) {
     splash.classList.add('hidden');
@@ -859,6 +860,8 @@ document.addEventListener('keydown', (e) => {
       startBtn.textContent = '[ RUNNING ]';
       startBtn.disabled = false;
     }
+    updateMobileControlsVisibility();
+  }
   }
   if (e.key === 'f' || e.key === 'F') {
     if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
