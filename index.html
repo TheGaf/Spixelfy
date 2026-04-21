@@ -563,7 +563,7 @@ function getRenderFrame() {
     base = out;
   } else {
     base = state.currentFrame || getIdleFrame();
-  }
+    }
   const tw = applyTwinkle(base);
   return applyTrackEvent(tw);
 }
