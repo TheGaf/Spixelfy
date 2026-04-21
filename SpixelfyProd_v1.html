@@ -81,6 +81,7 @@ const CONFIG = {
   trackEventFrames: 18
 };
 
+const LOGO_TARGET_URL = 'https://gaf.nyc';
 const artCanvas = document.getElementById('art');
 const uiCanvas  = document.getElementById('ui');
 const artCtx = artCanvas.getContext('2d', { alpha: false });
@@ -562,7 +563,10 @@ function drawUi() {
   const textWidth = uiCtx.measureText(modeLabel).width;
   state.hudRects.mode = { x: pad, y, w: textWidth, h: 18 };
 
-  if (state.logoReady) uiCtx.drawImage(logo, 20, h - 84, 64, 64);
+  iif (state.logoReady) {
+    uiCtx.drawImage(logo, 20, h - 84, 64, 64);
+    state.hudRects.logo = { x: 20, y: h - 84, w: 64, h: 64 };
+  }
 
   if (state.showText) {
     const songText = `${state.artist} - ${state.title}`;
@@ -677,6 +681,13 @@ uiCanvas.addEventListener('click', (e) => {
   const hit = (box) =>
     box && x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h;
 
+  // 1) Logo → open site
+  if (hit(state.hudRects.logo) && LOGO_TARGET_URL) {
+    window.open(LOGO_TARGET_URL, '_blank', 'noopener,noreferrer');
+    return;
+  }
+
+  // 2) Existing interactions
   if (hit(state.hudRects.mode)) {
     setMode(state.modeIndex + 1);
     return;
