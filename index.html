@@ -862,7 +862,6 @@ document.addEventListener('keydown', (e) => {
     }
     updateMobileControlsVisibility();
   }
-  }
   if (e.key === 'f' || e.key === 'F') {
     if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
     else document.exitFullscreen().catch(() => {});
