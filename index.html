@@ -25,14 +25,14 @@ canvas { position: fixed; inset: 0; display: block; width: 100vw; height: 100vh;
 #ui  { z-index: 2; pointer-events: auto; }
 
 #splash {
-  position: fixed; inset: 0; z-index: 10; background: rgba(0,0,0,.965);
+  position: fixed; inset: 0; z-index: 10; background: rgba(0,0,0,.85);
   display: flex; align-items: center; justify-content: center; padding: 24px;
 }
 #splash.hidden { display: none; }
 
 .panel {
   width: min(320px, 90vw); border: 4px solid rgba(0,255,106,.8); border-radius: 14px;
-  padding: 22px 18px 16px; background: rgba(0,0,0,.88); text-align: center;
+  padding: 22px 18px 16px; background: rgba(0,0,0,.86); text-align: center;
   box-shadow: 0 0 0 1px rgba(255,255,255,.04), 0 24px 72px rgba(0,0,0,.65);
 }
 .title { font-family: 'Micro 5', monospace; font-size: clamp(54px, 12vw, 78px); line-height: .9; color: var(--accent); }
@@ -100,6 +100,7 @@ const modes = [
 
 const state = {
   running: false,
+  hasStarted: false,
   modeIndex: 0,
   shape: modes[0].shape,
   gridSize: modes[0].size,
@@ -336,6 +337,7 @@ async function fetchCachedTrack() {
 function beginApp() {
   if (!state.running) {
     state.running = true;
+    state.hasStarted = true;
     requestAnimationFrame(loop);
   }
   beginSplashDissolve();
@@ -470,6 +472,7 @@ function blendFrames(a, b, t) {
 }
 
 // new idle: use derived palette from last live frame with slow wave; fall back to old green field
+// idle: dim last live cover; rainbow fallback if nothing played yet
 function getIdleFrame(force = false) {
   const now = performance.now();
   if (!force && state.idleCache && now - state.idleAt < 90) return state.idleCache;
@@ -479,32 +482,34 @@ function getIdleFrame(force = false) {
   const img = offCtx.createImageData(state.gridSize, state.gridSize);
   state.phase += 0.012;
 
-  if (state.idlePalette && state.idlePalette.length) {
-    const pal = state.idlePalette;
-    const len = pal.length;
-    for (let y = 0; y < state.gridSize; y++) {
-      for (let x = 0; x < state.gridSize; x++) {
-        const idx = (y * state.gridSize + x) * 4;
-        const wave = (Math.sin((x * 0.18) + state.phase) + Math.cos((y * 0.21) - state.phase * 0.8)) * 0.5 + 0.5;
-        const i = Math.min(len - 1, Math.max(0, Math.floor(wave * len)));
-        const c = pal[i];
-        const dim = 0.65 + 0.25 * Math.sin((x + y) * 0.12 + state.phase * 1.4);
-        img.data[idx]   = Math.max(0, Math.min(255, c.r * dim));
-        img.data[idx+1] = Math.max(0, Math.min(255, c.g * dim));
-        img.data[idx+2] = Math.max(0, Math.min(255, c.b * dim));
-        img.data[idx+3] = 255;
-      }
+  if (state.lastLiveFrame) {
+    // Dim the last live cover by ~30%, with a very soft breathing effect
+    const src = state.lastLiveFrame;
+    const len = src.data.length;
+    for (let i = 0; i < len; i += 4) {
+      const baseDim = 0.7;
+      const breathe = 0.05 * Math.sin(state.phase * 0.5 + i * 0.0003);
+      const factor = Math.max(0, Math.min(1, baseDim + breathe));
+      img.data[i]   = Math.round(src.data[i]   * factor);
+      img.data[i+1] = Math.round(src.data[i+1] * factor);
+      img.data[i+2] = Math.round(src.data[i+2] * factor);
+      img.data[i+3] = 255;
     }
   } else {
-    // first run fallback: original green field
+    // first run fallback: soft rainbow field
     for (let y = 0; y < state.gridSize; y++) {
       for (let x = 0; x < state.gridSize; x++) {
         const idx = (y * state.gridSize + x) * 4;
-        const n = Math.sin((x * 0.32) + state.phase) + Math.cos((y * 0.28) - state.phase * 0.9);
-        const glow = Math.max(0, Math.round(18 + n * 8));
-        img.data[idx]   = 0;
-        img.data[idx+1] = 122 + glow;
-        img.data[idx+2] = 28 + Math.round(glow * 0.35);
+        const u = x / state.gridSize;
+        const v = y / state.gridSize;
+        const t = (Math.sin(u * Math.PI * 2 + state.phase * 0.6) + Math.cos(v * Math.PI * 2 - state.phase * 0.4)) * 0.25 + 0.5;
+        // simple rainbow-ish gradient
+        const r = 200 + 55 * Math.sin(t * Math.PI * 2);
+        const g = 150 + 80 * Math.sin(t * Math.PI * 2 + 2.1);
+        const b = 180 + 75 * Math.sin(t * Math.PI * 2 + 4.2);
+        img.data[idx]   = Math.max(0, Math.min(255, r));
+        img.data[idx+1] = Math.max(0, Math.min(255, g));
+        img.data[idx+2] = Math.max(0, Math.min(255, b));
         img.data[idx+3] = 255;
       }
     }
@@ -737,8 +742,24 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'c' || e.key === 'C') setMode(state.modeIndex + 1);
   if (e.key === 't' || e.key === 'T') state.showText = !state.showText;
   if (e.key === 'p' || e.key === 'P') toggleTwinkle();
-  if (e.key === 'h' || e.key === 'H') splash.classList.toggle('hidden');
-  if (e.key === 'Escape' && !splash.classList.contains('hidden')) splash.classList.add('hidden');
+  if (e.key === 'h' || e.key === 'H') {
+  if (!state.hasStarted) {
+      // Before first start, keep it as a blocking splash
+      splash.classList.toggle('hidden');
+    } else {
+      // After start, use as translucent help overlay
+      splash.classList.toggle('hidden');
+      startBtn.textContent = '[ RUNNING ]';
+      startBtn.disabled = false;
+    }
+  }
+  if (e.key === 'Escape' && !splash.classList.contains('hidden')) {
+    splash.classList.add('hidden');
+    if (state.hasStarted) {
+      startBtn.textContent = '[ RUNNING ]';
+      startBtn.disabled = false;
+    }
+  }
   if (e.key === 'f' || e.key === 'F') {
     if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
     else document.exitFullscreen().catch(() => {});
@@ -772,8 +793,11 @@ uiCanvas.addEventListener('click', (e) => {
 });
 
 startBtn.addEventListener('click', () => {
-  if (state.running) {
+  if (state.running || state.hasStarted) {
+    // Once the app has started, this button just dismisses help
     splash.classList.add('hidden');
+    startBtn.textContent = '[ RUNNING ]';
+    startBtn.disabled = false;
     return;
   }
   beginApp();
