@@ -80,6 +80,7 @@ canvas { position: fixed; inset: 0; display: block; width: 100vw; height: 100vh;
 #mobileControls button:active {
   background: rgba(255,255,255,.16);
   color: #fff;
+  touch-action: manipulation;
 }
 
 @media (max-width: 700px) {
@@ -140,7 +141,9 @@ const startBtn = document.getElementById('start');
 const mobileControls = document.getElementById('mobileControls');
 function updateMobileControlsVisibility() {
   const mobile = window.innerWidth < 700;
-  mobileControls.style.display = mobile ? 'flex' : 'none';
+  const splashVisible = !splash.classList.contains('hidden');
+  const show = mobile && state.hasStarted && !splashVisible;
+  mobileControls.style.display = show ? 'flex' : 'none';
 }
   
 const off = document.createElement('canvas');
@@ -889,12 +892,7 @@ uiCanvas.addEventListener('click', (e) => {
   }
 });
 
-mobileControls.addEventListener('click', (e) => {
-  const btn = e.target.closest('button[data-action]');
-  if (!btn) return;
-
-  const action = btn.dataset.action;
-
+function handleMobileControl(action) {
   if (action === 'mode') {
     setMode(state.modeIndex + 1);
     return;
@@ -916,10 +914,22 @@ mobileControls.addEventListener('click', (e) => {
       startBtn.textContent = '[ RUNNING ]';
       startBtn.disabled = false;
     }
-    return;
+    updateMobileControlsVisibility();
   }
+}
+
+mobileControls.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-action]');
+  if (!btn) return;
+  handleMobileControl(btn.dataset.action);
 });
 
+mobileControls.addEventListener('touchstart', (e) => {
+  const btn = e.target.closest('button[data-action]');
+  if (!btn) return;
+  e.preventDefault();
+  handleMobileControl(btn.dataset.action);
+}, { passive: false });
 startBtn.addEventListener('click', () => {
   if (state.running || state.hasStarted) {
     // Once the app has started, this button just dismisses help
