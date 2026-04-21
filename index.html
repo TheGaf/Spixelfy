@@ -582,8 +582,15 @@ function drawBackground() {
 function drawPixels(frame) {
   const { w, h } = vp();
   const gridPx = state.gridSize * state.displayScale;
+
+  const isMobile = w < 700;
+  const topSafe = isMobile ? 56 : 0;
+  const bottomSafe = isMobile ? 88 : 0;
+
+  const availableH = h - topSafe - bottomSafe;
   const ox = Math.floor((w - gridPx) / 2);
-  const oy = Math.floor((h - gridPx) / 2);
+  const oy = Math.floor(topSafe + Math.max(0, (availableH - gridPx) / 2));
+
   state.coverRect = { x: ox, y: oy, w: gridPx, h: gridPx };
   for (let y = 0; y < state.gridSize; y++) {
     for (let x = 0; x < state.gridSize; x++) {
@@ -639,9 +646,13 @@ function drawUi() {
   const textWidth = uiCtx.measureText(modeLabel).width;
   state.hudRects.mode = { x: pad, y, w: textWidth, h: 18 };
 
+  const isMobile = w < 700;
+
   if (state.logoReady) {
-    uiCtx.drawImage(logo, 20, h - 84, 64, 64);
-    state.hudRects.logo = { x: 20, y: h - 84, w: 64, h: 64 };
+    const logoSize = isMobile ? 44 : 64;
+    const logoY = h - (isMobile ? 60 : 84);
+    uiCtx.drawImage(logo, 20, logoY, logoSize, logoSize);
+    state.hudRects.logo = { x: 20, y: logoY, w: logoSize, h: logoSize };
   }
 
   if (state.showText) {
@@ -655,15 +666,15 @@ function drawUi() {
         ? '#3dff7a'
         : '#ffd35f';
 
-    uiCtx.font = '18px "Micro 5"';
+    uiCtx.font = isMobile ? '15px "Micro 5"' : '18px "Micro 5"';
     uiCtx.textAlign = 'right';
     uiCtx.textBaseline = 'alphabetic';
 
     const dotRadius = 5;
     const gap = 10;
     const songWidth = uiCtx.measureText(songText).width;
-    const anchorX = w - 20;
-    const baselineY = h - 20;
+    const anchorX = w - 16;
+    const baselineY = h - (isMobile ? 14 : 20);
     const dotX = anchorX - songWidth - gap - dotRadius * 2;
     const dotY = baselineY - 5;
 
