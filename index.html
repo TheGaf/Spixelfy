@@ -45,34 +45,40 @@ canvas { position: fixed; inset: 0; display: block; width: 100vw; height: 100vh;
   background: var(--accent); color: #000; font: inherit; font-weight: 700; letter-spacing: .04em; cursor: pointer;
 }
 .footer { font-size: 10px; color: #666; margin-top: 10px; line-height: 1.35; }
+
 #mobileControls {
   position: fixed;
-  top: max(12px, env(safe-area-inset-top));
-  right: max(12px, env(safe-area-inset-right));
-  z-index: 12;
+  top: calc(env(safe-area-inset-top, 0px) + 18px);
+  right: calc(env(safe-area-inset-right, 0px) + 14px);
+  z-index: 40;
   display: none;
-  gap: 6px;
+  gap: 7px;
   align-items: center;
+  pointer-events: auto;
+  opacity: 0.99;
 }
 
 #mobileControls button {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border: 1px solid rgba(255,255,255,.14);
   border-radius: 999px;
-  background: rgba(0,0,0,.38);
-  color: rgba(220,220,220,.92);
+  background: rgba(0,0,0,.42);
+  color: rgba(220,220,220,.94);
   font-family: 'Micro 5', monospace;
-  font-size: 16px;
+  font-size: 17px;
   line-height: 1;
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
+  -webkit-appearance: none;
+  appearance: none;
   cursor: pointer;
   padding: 0;
+  pointer-events: auto;
 }
 
 #mobileControls button:active {
-  background: rgba(255,255,255,.14);
+  background: rgba(255,255,255,.16);
   color: #fff;
 }
 
@@ -132,6 +138,11 @@ const uiCtx  = uiCanvas.getContext('2d');
 const splash   = document.getElementById('splash');
 const startBtn = document.getElementById('start');
 const mobileControls = document.getElementById('mobileControls');
+function updateMobileControlsVisibility() {
+  const mobile = window.innerWidth < 700;
+  mobileControls.style.display = mobile ? 'flex' : 'none';
+}
+  
 const off = document.createElement('canvas');
 const offCtx = off.getContext('2d', { alpha: false, willReadFrequently: true });
 
@@ -224,6 +235,7 @@ function resize() {
   resizeCanvas(artCanvas, artCtx);
   resizeCanvas(uiCanvas, uiCtx);
   updateScale();
+  updateMobileControlsVisibility();
   state.idleCache = null;
   if (!state.currentFrame) state.currentFrame = getIdleFrame(true);
 }
@@ -659,6 +671,27 @@ function drawPixels(frame) {
   }
 }
 
+function wrapTextRight(ctx, text, maxWidth) {
+  const words = text.split(' ');
+  const lines = [];
+  let line = '';
+
+  for (let i = 0; i < words.length; i++) {
+    const testLine = line ? `${line} ${words[i]}` : words[i];
+    const testWidth = ctx.measureText(testLine).width;
+
+    if (testWidth > maxWidth && line) {
+      lines.push(line);
+      line = words[i];
+    } else {
+      line = testLine;
+    }
+  }
+
+  if (line) lines.push(line);
+  return lines;
+}
+
 function drawUi() {
   const { w, h } = vp();
   uiCtx.clearRect(0, 0, w, h);
@@ -710,32 +743,41 @@ function drawUi() {
         ? '#3dff7a'
         : '#ffd35f';
 
-    uiCtx.font = isMobile ? '15px "Micro 5"' : '18px "Micro 5"';
-    uiCtx.textAlign = 'right';
-    uiCtx.textBaseline = 'alphabetic';
-
-    const dotRadius = 5;
-    const gap = 10;
-    const songWidth = uiCtx.measureText(songText).width;
-    const anchorX = w - 16;
-    const baselineY = h - (isMobile ? 14 : 20);
-    const dotX = anchorX - songWidth - gap - dotRadius * 2;
-    const dotY = baselineY - 5;
-
-    state.textRect = {
-      x: dotX - dotRadius - 6,
-      y: baselineY - 20,
-      w: anchorX - (dotX - dotRadius - 6),
-      h: 26
-    };
-
-    uiCtx.beginPath();
-    uiCtx.fillStyle = dotColor;
-    uiCtx.arc(dotX, dotY, dotRadius, 0, Math.PI * 2);
-    uiCtx.fill();
-
-    uiCtx.fillStyle = '#cecece';
-    uiCtx.fillText(songText, anchorX, baselineY);
+      uiCtx.font = isMobile ? '15px "Micro 5"' : '18px "Micro 5"';
+      uiCtx.textAlign = 'right';
+      uiCtx.textBaseline = 'alphabetic';
+  
+      const dotRadius = isMobile ? 4 : 5;
+      const gap = isMobile ? 8 : 10;
+      const lineHeight = isMobile ? 14 : 18;
+      const maxTextWidth = isMobile ? Math.min(190, w - 92) : Math.min(420, w - 130);
+      const lines = wrapTextRight(uiCtx, songText, maxTextWidth).slice(0, 3);
+  
+      const anchorX = w - 16;
+      const baselineY = h - (isMobile ? 14 : 20);
+      const textBlockHeight = Math.max(lineHeight, lines.length * lineHeight);
+      const widestLine = lines.reduce((m, line) => Math.max(m, uiCtx.measureText(line).width), 0);
+  
+      const dotX = anchorX - widestLine - gap - dotRadius * 2;
+      const dotY = baselineY - textBlockHeight + lineHeight / 2 - 1;
+  
+      state.textRect = {
+        x: dotX - dotRadius - 6,
+        y: baselineY - textBlockHeight - 6,
+        w: anchorX - (dotX - dotRadius - 6),
+        h: textBlockHeight + 10
+      };
+  
+      uiCtx.beginPath();
+      uiCtx.fillStyle = dotColor;
+      uiCtx.arc(dotX, dotY, dotRadius, 0, Math.PI * 2);
+      uiCtx.fill();
+  
+      uiCtx.fillStyle = '#cecece';
+      for (let i = 0; i < lines.length; i++) {
+        const y = baselineY - ((lines.length - 1 - i) * lineHeight);
+        uiCtx.fillText(lines[i], anchorX, y);
+      }
   } else {
     state.textRect = {
       x: w - 260,
