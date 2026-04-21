@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SpixelfyProd_v1</title>
+<title>SpixelfyProd_v1_1</title>
 <link rel="icon" href="data:,">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -54,7 +54,7 @@ canvas { position: fixed; inset: 0; display: block; width: 100vw; height: 100vh;
 <div id="splash">
   <div class="panel" role="dialog" aria-modal="true" aria-labelledby="title">
     <div id="title" class="title">SPIXELFY</div>
-    <div class="by">SpixelfyProd_v1 · shared session</div>
+    <div class="by">SpixelfyProd_v1.1 · shared session</div>
     <img class="logo" src="https://gaf.nyc/thegaf.nyc/theGafNYC.gif" alt="The Gaf NYC logo" width="64" height="64" loading="eager"
          onclick="window.open('https://gaf.nyc', '_blank', 'noopener,noreferrer')">
     <div class="commands">
@@ -111,6 +111,9 @@ const state = {
   currentImg: null,
   currentFrame: null,
   oldFrame: null,
+  // new idle memory
+  lastLiveFrame: null,
+  idlePalette: null,
   transitionOrder: [],
   transitionProgress: 0,
   transitionPixelsPerFrame: 0,
@@ -119,6 +122,7 @@ const state = {
   artist: 'SPIXELFY',
   title: 'Waiting for shared source',
   isPlaying: false,
+  wasPlaying: false,
   progressMs: 0,
   durationMs: 0,
   updatedAtMs: 0,
@@ -237,6 +241,33 @@ function applyStatusFromState() {
   setStatus('Live from shared backend cache.');
 }
 
+// derive simple palette from a frame: 5 buckets across image
+function deriveIdlePaletteFromFrame(frame) {
+  if (!frame) return null;
+  const { width, height, data } = frame;
+  const buckets = 5;
+  const sums = Array.from({ length: buckets }, () => ({ r:0,g:0,b:0,count:0 }));
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * 4;
+      const r = data[idx], g = data[idx+1], b = data[idx+2];
+      const bucket = Math.floor((x / width) * buckets);
+      const s = sums[bucket];
+      s.r += r; s.g += g; s.b += b; s.count++;
+    }
+  }
+  const palette = [];
+  for (const s of sums) {
+    if (!s.count) continue;
+    palette.push({
+      r: s.r / s.count,
+      g: s.g / s.count,
+      b: s.b / s.count
+    });
+  }
+  return palette.length ? palette : null;
+}
+
 async function fetchCachedTrack() {
   if (state.inflight) return;
   state.inflight = true;
@@ -254,6 +285,7 @@ async function fetchCachedTrack() {
 
     const prevImage = state.lastImageUrl;
     const prevTrack = state.lastTrackId;
+    const wasPlaying = state.isPlaying;
 
     state.artist = data.artist || 'Unknown artist';
     state.title = data.track || 'Unknown track';
@@ -269,13 +301,24 @@ async function fetchCachedTrack() {
       (state.lastTrackId && state.lastTrackId !== prevTrack) ||
       (state.lastImageUrl && state.lastImageUrl !== prevImage);
 
-    if (data.imageUrl && state.isPlaying && data.imageUrl !== prevImage) {
+    // resume-from-idle: if we were idle and now playing, always force cover reload if we have a URL
+    if (state.isPlaying && !wasPlaying && data.imageUrl) {
       loadCover(data.imageUrl);
+      state.blendTarget = null;
+      state.blendCountdown = 0;
+      state.oldFrame = state.currentFrame;
+      if (state.oldFrame) buildTransitionOrder();
+      state.trackEventFramesLeft = CONFIG.trackEventFrames;
+    } else if (data.imageUrl && state.isPlaying && data.imageUrl !== prevImage) {
+      // normal track/cover change
+      loadCover(data.imageUrl);
+      if (trackChanged) state.trackEventFramesLeft = CONFIG.trackEventFrames;
     } else if (!state.isPlaying) {
+      // enter idle → blend to idle frame
       queueIdleBlend();
     }
 
-    if (trackChanged && state.isPlaying) {
+    if (trackChanged && state.isPlaying && !state.trackEventFramesLeft) {
       state.trackEventFramesLeft = CONFIG.trackEventFrames;
     }
 
@@ -336,7 +379,12 @@ function getStaticFrame(img) {
   offCtx.clearRect(0, 0, state.gridSize, state.gridSize);
   offCtx.imageSmoothingEnabled = true;
   drawSquareCover(offCtx, img, state.gridSize);
-  return offCtx.getImageData(0, 0, state.gridSize, state.gridSize);
+  const frame = offCtx.getImageData(0, 0, state.gridSize, state.gridSize);
+  // cache as last live frame for idle palette
+  state.lastLiveFrame = frame;
+  state.idlePalette = deriveIdlePaletteFromFrame(frame);
+  state.idleCache = null;
+  return frame;
 }
 
 function buildTransitionOrder() {
@@ -421,24 +469,47 @@ function blendFrames(a, b, t) {
   return out;
 }
 
+// new idle: use derived palette from last live frame with slow wave; fall back to old green field
 function getIdleFrame(force = false) {
   const now = performance.now();
   if (!force && state.idleCache && now - state.idleAt < 90) return state.idleCache;
+
   off.width  = state.gridSize;
   off.height = state.gridSize;
   const img = offCtx.createImageData(state.gridSize, state.gridSize);
-  state.phase += 0.018;
-  for (let y = 0; y < state.gridSize; y++) {
-    for (let x = 0; x < state.gridSize; x++) {
-      const idx = (y * state.gridSize + x) * 4;
-      const n = Math.sin((x * 0.32) + state.phase) + Math.cos((y * 0.28) - state.phase * 0.9);
-      const glow = Math.max(0, Math.round(18 + n * 8));
-      img.data[idx]   = 0;
-      img.data[idx+1] = 122 + glow;
-      img.data[idx+2] = 28 + Math.round(glow * 0.35);
-      img.data[idx+3] = 255;
+  state.phase += 0.012;
+
+  if (state.idlePalette && state.idlePalette.length) {
+    const pal = state.idlePalette;
+    const len = pal.length;
+    for (let y = 0; y < state.gridSize; y++) {
+      for (let x = 0; x < state.gridSize; x++) {
+        const idx = (y * state.gridSize + x) * 4;
+        const wave = (Math.sin((x * 0.18) + state.phase) + Math.cos((y * 0.21) - state.phase * 0.8)) * 0.5 + 0.5;
+        const i = Math.min(len - 1, Math.max(0, Math.floor(wave * len)));
+        const c = pal[i];
+        const dim = 0.65 + 0.25 * Math.sin((x + y) * 0.12 + state.phase * 1.4);
+        img.data[idx]   = Math.max(0, Math.min(255, c.r * dim));
+        img.data[idx+1] = Math.max(0, Math.min(255, c.g * dim));
+        img.data[idx+2] = Math.max(0, Math.min(255, c.b * dim));
+        img.data[idx+3] = 255;
+      }
+    }
+  } else {
+    // first run fallback: original green field
+    for (let y = 0; y < state.gridSize; y++) {
+      for (let x = 0; x < state.gridSize; x++) {
+        const idx = (y * state.gridSize + x) * 4;
+        const n = Math.sin((x * 0.32) + state.phase) + Math.cos((y * 0.28) - state.phase * 0.9);
+        const glow = Math.max(0, Math.round(18 + n * 8));
+        img.data[idx]   = 0;
+        img.data[idx+1] = 122 + glow;
+        img.data[idx+2] = 28 + Math.round(glow * 0.35);
+        img.data[idx+3] = 255;
+      }
     }
   }
+
   state.idleCache = img;
   state.idleAt    = now;
   return img;
@@ -541,7 +612,7 @@ function drawUi() {
 
   uiCtx.textBaseline = 'top';
   uiCtx.textAlign = 'left';
-  uiCtx.font = '14px "Titillium Web"';
+  uiCtx.font = '16px "Micro 5"';
 
   const modeLabel = `➜ ${state.shape === 'square' ? 'Sq' : 'Cir'} ${state.gridSize}`;
   const now = performance.now();
@@ -579,7 +650,7 @@ function drawUi() {
         ? '#3dff7a'
         : '#ffd35f';
 
-    uiCtx.font = '16px "Micro 5"';
+    uiCtx.font = '18px "Micro 5"';
     uiCtx.textAlign = 'right';
     uiCtx.textBaseline = 'alphabetic';
 
@@ -681,13 +752,11 @@ uiCanvas.addEventListener('click', (e) => {
   const hit = (box) =>
     box && x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h;
 
-  // 1) Logo → open site
   if (hit(state.hudRects.logo) && LOGO_TARGET_URL) {
     window.open(LOGO_TARGET_URL, '_blank', 'noopener,noreferrer');
     return;
   }
 
-  // 2) Existing interactions
   if (hit(state.hudRects.mode)) {
     setMode(state.modeIndex + 1);
     return;
@@ -709,6 +778,7 @@ startBtn.addEventListener('click', () => {
   }
   beginApp();
 });
+
 state.currentFrame = getIdleFrame(true);
 refreshTwinkleBuffer();
 setStatus('');
