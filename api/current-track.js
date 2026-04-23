@@ -55,6 +55,25 @@ function normalizePlayback(data) {
     stale: false
   };
 }
+/*
+
+OLD WORKING VERSION BELOW
+export default async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+
+  return res.status(200).json({
+    ok: true,
+    isPlaying: false,
+    track: null,
+    artist: null,
+    imageUrl: null,
+    trackId: null,
+    progressMs: 0,
+    durationMs: 0,
+    stale: true,
+    source: 'disabled'
+  });
+}
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
