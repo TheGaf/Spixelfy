@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spixelfy Control</title>
+
+<style>
+body {
+  background:#000;
+  color:#d7d7d7;
+  font-family:sans-serif;
+  padding:20px;
+}
+
+h2 {
+  margin-bottom: 10px;
+}
+
+input,button {
+  width:100%;
+  padding:14px;
+  margin-top:10px;
+  font-size:16px;
+  border-radius: 6px;
+}
+
+button {
+  background:#00ff6a;
+  color:#000;
+  border:none;
+  font-weight:bold;
+  cursor:pointer;
+}
+
+button:active {
+  transform: scale(0.98);
+}
+
+#status {
+  margin-bottom:10px;
+  font-weight: bold;
+}
+
+.live { color:#00ff6a; }
+.off { color:#666; }
+
+.small {
+  font-size: 12px;
+  color: #777;
+  margin-top: 10px;
+}
+</style>
+</head>
+
+<body>
+
+<h2>Spixelfy Control</h2>
+
+<div id="status" class="off">OFFLINE</div>
+
+<input id="jam" placeholder="Paste Jam link (required)">
+<input id="note" placeholder="Optional note (vibe, theme, etc)">
+
+<button onclick="goLive()">GO LIVE</button>
+<button onclick="goOffline()">GO OFFLINE</button>
+
+<div class="small">
+Jam = Spotify session link<br>
+Note = optional context for Discord alert
+</div>
+
+<script>
+// 🔐 SIMPLE PASSWORD GATE
+const PASS = "gaflive";
+if (prompt("Enter passcode") !== PASS) {
+  document.body.innerHTML = "Nope.";
+  throw new Error("blocked");
+}
+
+// 🔧 CONFIG
+const API = "/api/state"; // your backend endpoint
+const WEBHOOK = "PASTE_YOUR_DISCORD_WEBHOOK_HERE";
+const SITE_URL = "https://gaf.nyc"; // your public page
+
+let isLive = false;
+
+// UI UPDATE
+function setUI(live) {
+  const el = document.getElementById("status");
+  el.textContent = live ? "● LIVE" : "OFFLINE";
+  el.className = live ? "live" : "off";
+  isLive = live;
+}
+
+// GO LIVE
+async function goLive() {
+  const jam = document.getElementById('jam').value.trim();
+  const note = document.getElementById('note').value.trim();
+
+  if (!jam) {
+    alert("Paste a Jam link first");
+    return;
+  }
+
+  try {
+    // update backend
+    await fetch(API, {
+      method:"POST",
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        live:true,
+        jam:jam
+      })
+    });
+
+    setUI(true);
+
+    // DISCORD ALERT
+    fetch(WEBHOOK, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({
+        content:
+`🟢 **LIVE NOW**
+
+🎧 ${note || "Spixelfy session"}
+
+👉 Join Session:
+${jam}
+
+👉 Watch Visual:
+${SITE_URL}`
+      })
+    });
+
+  } catch (e) {
+    console.error(e);
+    alert("Error going live");
+  }
+}
+
+// GO OFFLINE
+async function goOffline() {
+  try {
+    await fetch(API, {
+      method:"POST",
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        live:false,
+        jam:""
+      })
+    });
+
+    setUI(false);
+
+  } catch (e) {
+    console.error(e);
+    alert("Error going offline");
+  }
+}
+</script>
+
+</body>
+</html>
