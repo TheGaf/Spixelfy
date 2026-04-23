@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spixelfy Live</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;600&family=Micro+5&display=swap" rel="stylesheet">
+
+<style>
+html, body {
+  margin: 0;
+  background: black;
+  overflow: hidden;
+  font-family: 'Titillium Web', sans-serif;
+  color: #d7d7d7;
+}
+
+canvas {
+  position: fixed;
+  inset: 0;
+}
+
+.logo {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  width: 48px;
+  cursor: pointer;
+  z-index: 10;
+}
+
+.text {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  font-family: 'Micro 5', monospace;
+  font-size: 16px;
+  text-align: right;
+  z-index: 10;
+}
+
+.meta {
+  position: fixed;
+  bottom: 56px;
+  right: 16px;
+  font-family: 'Micro 5', monospace;
+  font-size: 14px;
+  text-align: right;
+  z-index: 10;
+  color: #00ff6a;
+}
+
+.live {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  font-family: 'Micro 5', monospace;
+  font-size: 14px;
+  color: #00ff6a;
+  z-index: 10;
+}
+
+.text a {
+  color: #cecece;
+  text-decoration: none;
+}
+
+.text a:hover {
+  color: white;
+}
+
+.jam {
+  display: block;
+  margin-top: 4px;
+  color: #00ff6a;
+}
+</style>
+</head>
+
+<body>
+
+<canvas id="art"></canvas>
+
+<img class="logo" src="https://gaf.nyc/thegaf.nyc/theGafNYC.gif"
+onclick="window.open('https://gaf.nyc','_blank')">
+
+<div class="live" id="live"></div>
+<div class="meta" id="meta"></div>
+<div class="text" id="text"></div>
+
+<script>
+const CONFIG = {
+  api: '/api/current-track',
+  poll: 5000
+};
+
+const canvas = document.getElementById('art');
+const ctx = canvas.getContext('2d');
+
+const modes = [
+  { type: 'square', size: 32 },
+  { type: 'circle', size: 32 },
+  { type: 'square', size: 64 },
+  { type: 'circle', size: 64 },
+  { type: 'cover', size: 64 }
+];
+
+let state = {
+  mode: 0,
+  img: null,
+  artist: '',
+  title: '',
+  url: '',
+  jam: '',
+  trackId: null,
+  progress: 0,
+  duration: 0,
+  source: 'me',
+  isLive: false,
+  trackStartTime: 0
+};
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+function setMode() {
+  state.mode = (state.mode + 1) % modes.length;
+}
+window.addEventListener('click', setMode);
+
+async function fetchTrack() {
+  try {
+    const res = await fetch(CONFIG.api);
+    const data = await res.json();
+
+    const newTrackId = data.trackId;
+    const progress = data.progressMs || 0;
+    const duration = data.durationMs || 0;
+
+    state.isLive = data.isPlaying && !data.stale;
+
+    // TRACK CHANGE DETECTION
+    if (newTrackId && newTrackId !== state.trackId) {
+
+      const remaining = state.duration - state.progress;
+      const earlyChange = remaining > 5000;
+
+      state.source = earlyChange ? "listener" : "me";
+      state.trackStartTime = Date.now();
+    }
+
+    state.trackId = newTrackId;
+    state.progress = progress;
+    state.duration = duration;
+
+    state.artist = data.artist;
+    state.title = data.track;
+    state.url = data.spotifyUrl || `https://open.spotify.com/track/${data.trackId}`;
+    state.jam = data.jam || '';
+
+    if (data.imageUrl) {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => state.img = img;
+      img.src = data.imageUrl;
+    }
+
+    updateUI();
+
+  } catch {}
+}
+
+function updateUI() {
+  const textEl = document.getElementById('text');
+  const metaEl = document.getElementById('meta');
+  const liveEl = document.getElementById('live');
+
+  // LIVE BLINK
+  if (state.isLive) {
+    const blink = Math.floor(Date.now() / 500) % 2;
+    liveEl.textContent = blink ? "● LIVE" : "  LIVE";
+  } else {
+    liveEl.textContent = "";
+  }
+
+  // TEXT
+  let html = `<a href="${state.url}" target="_blank">${state.artist} — ${state.title}</a>`;
+  if (state.jam) {
+    html += `<a class="jam" href="${state.jam}" target="_blank">JOIN SESSION</a>`;
+  }
+  textEl.innerHTML = html;
+
+  // META (NEW TRACK + LISTENER)
+  if (state.source === "listener") {
+    metaEl.innerHTML = `NEW TRACK<br>ADDED BY A LISTENER`;
+  } else {
+    metaEl.innerHTML = "";
+  }
+}
+
+setInterval(fetchTrack, CONFIG.poll);
+fetchTrack();
+
+function draw() {
+  ctx.fillStyle = 'black';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (!state.img) {
+    requestAnimationFrame(draw);
+    return;
+  }
+
+  const mode = modes[state.mode];
+  const grid = mode.size;
+  const scale = Math.floor(Math.min(canvas.width, canvas.height) / grid);
+
+  const ox = (canvas.width - grid * scale) / 2;
+  const oy = (canvas.height - grid * scale) / 2;
+
+  if (mode.type === 'cover') {
+    ctx.drawImage(state.img, ox, oy, grid * scale, grid * scale);
+    requestAnimationFrame(draw);
+    return;
+  }
+
+  const off = document.createElement('canvas');
+  off.width = grid;
+  off.height = grid;
+  const offCtx = off.getContext('2d');
+
+  offCtx.drawImage(state.img, 0, 0, grid, grid);
+  const imgData = offCtx.getImageData(0, 0, grid, grid);
+
+  for (let y = 0; y < grid; y++) {
+    for (let x = 0; x < grid; x++) {
+      const i = (y * grid + x) * 4;
+      const r = imgData.data[i];
+      const g = imgData.data[i+1];
+      const b = imgData.data[i+2];
+
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+
+      const px = ox + x * scale;
+      const py = oy + y * scale;
+
+      if (mode.type === 'square') {
+        ctx.fillRect(px, py, scale, scale);
+      } else {
+        ctx.beginPath();
+        ctx.arc(px + scale/2, py + scale/2, scale/2 - 1, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  requestAnimationFrame(draw);
+}
+
+draw();
+</script>
+
+</body>
+</html>
