@@ -75,6 +75,31 @@ canvas {
   margin-top: 4px;
   color: #00ff6a;
 }
+
+.live {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  font-family: 'Micro 5', monospace;
+  font-size: 14px;
+  z-index: 10;
+}
+
+.live.on {
+  color: #00ff6a;
+  animation: pulse 2s infinite;
+}
+
+.live.off {
+  color: #ff4d4d;
+}
+
+@keyframes pulse {
+  0% { opacity: 0.4; }
+  50% { opacity: 1; }
+  100% { opacity: 0.4; }
+}
+  
 </style>
 </head>
 
@@ -148,7 +173,7 @@ async function fetchTrack() {
     if (newTrackId && newTrackId !== state.trackId) {
 
       const remaining = state.duration - state.progress;
-      const earlyChange = remaining > 5000;
+      const earlyChange = remaining > 5000 && state.progress > 5000;
 
       state.source = earlyChange ? "listener" : "me";
       state.trackStartTime = Date.now();
@@ -180,26 +205,37 @@ function updateUI() {
   const metaEl = document.getElementById('meta');
   const liveEl = document.getElementById('live');
 
-  // LIVE BLINK
-  if (state.isLive) {
-    const blink = Math.floor(Date.now() / 500) % 2;
-    liveEl.textContent = blink ? "● LIVE" : "  LIVE";
-  } else {
-    liveEl.textContent = "";
-  }
-
-  // TEXT
-  let html = `<a href="${state.url}" target="_blank">${state.artist} — ${state.title}</a>`;
-  if (state.jam) {
-    html += `<a class="jam" href="${state.jam}" target="_blank">JOIN SESSION</a>`;
-  }
-  textEl.innerHTML = html;
-
-  // META (NEW TRACK + LISTENER)
-  if (state.source === "listener") {
-    metaEl.innerHTML = `NEW TRACK<br>ADDED BY A LISTENER`;
-  } else {
+  // 🎯 NOT STREAMING STATE
+  if (!state.artist || !state.title) {
+    textEl.innerHTML = "";
     metaEl.innerHTML = "";
+
+    // center message (we'll draw this in canvas instead)
+    state.isEmpty = true;
+  } else {
+    state.isEmpty = false;
+
+    let html = `<a href="${state.url}" target="_blank">${state.artist} — ${state.title}</a>`;
+    if (state.jam) {
+      html += `<a class="jam" href="${state.jam}" target="_blank">JOIN SESSION</a>`;
+    }
+    textEl.innerHTML = html;
+
+    // meta
+    if (state.source === "listener") {
+      metaEl.innerHTML = `<span style="color:#FFD84D">NEW TRACK</span><br><span style="color:#FFD84D">ADDED BY A LISTENER</span>`;
+    } else {
+      metaEl.innerHTML = "";
+    }
+  }
+
+  // 🔴 LIVE / OFFLINE
+  if (state.isLive) {
+    liveEl.className = "live on";
+    liveEl.textContent = "● LIVE";
+  } else {
+    liveEl.className = "live off";
+    liveEl.textContent = "● NOT STREAMING";
   }
 }
 
@@ -207,6 +243,35 @@ setInterval(fetchTrack, CONFIG.poll);
 fetchTrack();
 
 function draw() {
+  if (state.isEmpty) {
+    ctx.fillStyle = "black";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  
+    ctx.textAlign = "center";
+  
+    // title
+    ctx.fillStyle = "#00ff6a";
+    ctx.font = "32px 'Micro 5'";
+    ctx.fillText("SPIXELFY", canvas.width / 2, canvas.height / 2 - 20);
+  
+    // message
+    ctx.fillStyle = "#d7d7d7";
+    ctx.font = "16px 'Micro 5'";
+    ctx.fillText(
+      "The Gaf is not streaming right now.",
+      canvas.width / 2,
+      canvas.height / 2 + 10
+    );
+  
+    ctx.fillStyle = "#00ff6a";
+    ctx.fillText(
+      "Join Discord for Live Alerts",
+      canvas.width / 2,
+      canvas.height / 2 + 40
+    );
+  
+    return requestAnimationFrame(draw);
+  }
   ctx.fillStyle = 'black';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
